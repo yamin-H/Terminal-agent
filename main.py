@@ -1,4 +1,3 @@
-"""Terminal Coding Agent entry point"""
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -9,6 +8,7 @@ from rich.text import Text
 from agent.loop import run_loop
 from agent.prompt import SYSTEM_PROMPT
 from agent.context import build_repo_context
+from agent.session import save_session, load_session, clear_session
 
 app = typer.Typer()
 console = Console()
@@ -17,9 +17,9 @@ TOOL_COLORS = {
     "read_file": "cyan",
     "write_file": "yellow",
     "edit_file": "yellow",
-    "search_code": "green",
     "list_directory": "blue",
     "run_command": "magenta",
+    "search_code": "green",
 }
 
 def render_events(task, messages):
@@ -63,41 +63,53 @@ def render_events(task, messages):
 @app.command()
 def run():
     console.print()
-    console.print(Panel("[bold green]Terminal Coding Agent[/bold green]\n[dim]Type your task and press Enter. Type 'exit' to quit.[/dim]", expand=False))
+    console.print(Panel("[bold green]Terminal Coding Agent[/bold green]\n[dim]Type your task and press Enter. Type 'exit' to quit. Type 'clear' to reset session.[/dim]", expand=False))
     console.print()
 
-    with console.status("[dim]Loading repo context...[/dim]", spinner="dots"):
-        context = build_repo_context(".")
-
-    messages = [
-        {
-            "role": "user",
-            "content": f"Here is the current project structure:\n\n{context}"
-        },
-        {
-            "role": "assistant",
-            "content": "Got it. I have the project structure loaded and I'm ready to help."
-        }
-    ]
-
-    console.print("[dim]✓ Repo context loaded[/dim]\n")
+    saved = load_session()
+    if saved:
+        messages = saved
+        console.print(f"[dim]✓ Resumed previous session ({len(messages)} messages)[/dim]\n")
+    else:
+        with console.status("[dim]Loading repo context...[/dim]", spinner="dots"):
+            context = build_repo_context(".")
+        messages = [
+            {
+                "role": "user",
+                "content": f"Here is the current project structure:\n\n{context}"
+            },
+            {
+                "role": "assistant",
+                "content": "Got it. I have the project structure loaded and I'm ready to help."
+            }
+        ]
+        console.print("[dim]✓ Repo context loaded[/dim]\n")
 
     while True:
         try:
             task = console.input("[bold green]>[/bold green] ").strip()
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Bye.[/dim]")
+            save_session(messages)
+            console.print("\n[dim]Session saved. Bye.[/dim]")
             break
 
         if not task:
             continue
 
         if task.lower() in ("exit", "quit"):
-            console.print("[dim]Bye.[/dim]")
+            save_session(messages)
+            console.print("[dim]Session saved. Bye.[/dim]")
             break
+
+        if task.lower() == "clear":
+            clear_session()
+            messages = []
+            console.print("[dim]Session cleared.[/dim]\n")
+            continue
 
         console.print()
         render_events(task, messages)
+        save_session(messages)
 
 if __name__ == "__main__":
     app()
