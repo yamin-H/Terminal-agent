@@ -46,9 +46,22 @@ def render_events(task, messages):
 
         elif event["type"] == "tool_result":
             result = event["result"]
-            preview = result[:120].replace("\n", " ") + ("..." if len(result) > 120 else "")
-            console.print(f"  [dim green]↳ {preview}[/dim green]")
-            console.print()
+            name = event["name"]
+
+            if name == "edit_file" and result.startswith("DIFF"):
+                lines = result.split("\n")[1:]  # skip "DIFF" header
+                for line in lines:
+                    if line.startswith("+"):
+                        console.print(f"  [green]{line}[/green]")
+                    elif line.startswith("-"):
+                        console.print(f"  [red]{line}[/red]")
+                    elif line.startswith("@@"):
+                        console.print(f"  [dim cyan]{line}[/dim cyan]")
+                console.print()
+            else:
+                preview = result[:120].replace("\n", " ") + ("..." if len(result) > 120 else "")
+                console.print(f"  [dim green]↳ {preview}[/dim green]")
+                console.print()
 
         elif event["type"] == "done":
             stop_spinner()
@@ -59,6 +72,9 @@ def render_events(task, messages):
         elif event["type"] == "max_steps":
             stop_spinner()
             console.print("[red]⚠ Max steps reached.[/red]")
+        elif event["type"] == "error":
+            stop_spinner()
+            console.print(f"[red]✖ API error: {event['content']}[/red]")
 
 @app.command()
 def run():

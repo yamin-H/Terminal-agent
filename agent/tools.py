@@ -3,6 +3,14 @@ import subprocess
 from pathlib import Path
 
 def read_file(path: str) -> str:
+    """Read and return the contents of a file.
+
+    Args:
+        path: Relative path to the file to read.
+
+    Returns:
+        The file's text content, or an error message on failure.
+    """
     try:
         return Path(path).read_text(encoding="utf-8")
     except Exception as e:
@@ -15,6 +23,8 @@ def write_file(path: str, content: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+import difflib
+
 def edit_file(path: str, old_content: str, new_content: str) -> str:
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -22,7 +32,13 @@ def edit_file(path: str, old_content: str, new_content: str) -> str:
             return "Error: old_content not found in file. Read the file first and make sure it matches exactly."
         updated = text.replace(old_content, new_content, 1)
         Path(path).write_text(updated, encoding="utf-8")
-        return "Done"
+
+        diff = list(difflib.unified_diff(
+            old_content.splitlines(),
+            new_content.splitlines(),
+            lineterm=""
+        ))
+        return "DIFF\n" + "\n".join(diff) if diff else "Done (no changes)"
     except Exception as e:
         return f"Error: {e}"
 

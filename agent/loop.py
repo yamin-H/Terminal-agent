@@ -23,11 +23,15 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
     while steps < MAX_STEPS:
         yield {"type": "thinking"}
 
-        response = client.chat.completions.create(
-            model="qwen/qwen3.8-27b",
-            messages=[{"role": "system", "content": system_prompt}] + messages,
-            tools=TOOL_DEFINITIONS,
-        )
+        try:
+            response = client.chat.completions.create(
+                model="qwen/qwen3.8-27b",
+                messages=[{"role": "system", "content": system_prompt}] + messages,
+                tools=TOOL_DEFINITIONS,
+            )
+        except Exception as e:
+            yield {"type": "error", "content": str(e)}
+            return
 
         message = response.choices[0].message
         steps += 1
