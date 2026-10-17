@@ -5,6 +5,7 @@ from rich.rule import Rule
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
+from rich.syntax import Syntax
 from agent.loop import run_loop
 from agent.prompt import SYSTEM_PROMPT
 from agent.context import build_repo_context
@@ -24,6 +25,8 @@ TOOL_COLORS = {
 
 def render_events(task, messages):
     live = None
+    stream_live = None
+    streamed_text = ""
 
     def stop_spinner():
         nonlocal live
@@ -31,20 +34,52 @@ def render_events(task, messages):
             live.stop()
             live = None
 
+    def stop_stream():
+        nonlocal stream_live, streamed_text
+        if stream_live:
+            stream_live.stop()
+            stream_live = None
+        streamed_text = ""
+
     gen = run_loop(task, SYSTEM_PROMPT, messages)
     event = next(gen)
 
     while True:
         if event["type"] == "thinking":
-            live = Live(Spinner("dots", text=Text("thinking...", style="dim")), refresh_per_second=20, transient=True)
+            stop_stream()
+            live = Live(
+                Spinner("dots", text=Text("thinking...", style="dim")),
+                refresh_per_second=20,
+                transient=True
+            )
             live.start()
             try:
                 event = gen.send(None)
             except StopIteration:
                 break
 
+        elif event["type"] == "stream_token":
+            stop_spinner()
+            streamed_text += event["token"]
+            if stream_live is None:
+                stream_live = Live(
+                    Panel(streamed_text, title="[bold blue]Assistant[/bold blue]", border_style="blue"),
+                    refresh_per_second=20
+                )
+                stream_live.start()
+            else:
+                stream_live.update(
+                    Panel(streamed_text, title="[bold blue]Assistant[/bold blue]", border_style="blue")
+                )
+            try:
+                event = gen.send(None)
+            except StopIteration:
+                stop_stream()
+                break
+
         elif event["type"] == "tool_call":
             stop_spinner()
+            stop_stream()
             name = event["name"]
             args = event["args"]
             color = TOOL_COLORS.get(name, "white")
@@ -69,17 +104,26 @@ def render_events(task, messages):
             result = event["result"]
 
             if name == "edit_file" and result.startswith("DIFF"):
-                lines = result.split("\n")[1:]
-                for line in lines:
-                    if line.startswith("+"):
-                        console.print(f"  [green]{line}[/green]")
-                    elif line.startswith("-"):
-                        console.print(f"  [red]{line}[/red]")
-                    elif line.startswith("@@"):
-                        console.print(f"  [dim cyan]{line}[/dim cyan]")
+                diff_body = "\n".join(result.split("\n")[1:])
+                console.print(Syntax(diff_body, "diff", theme="monokai", indent_guides=False))
                 console.print()
+
+            elif name == "read_file":
+                syntax = Syntax(result, "python", theme="monokai", line_numbers=True, word_wrap=True)
+                console.print(Panel(syntax, title="[dim]file content[/dim]", border_style="dim"))
+                console.print()
+
+            elif name == "run_command":
+                console.print(Panel(result.strip(), title="[dim]output[/dim]", border_style="dim yellow"))
+                console.print()
+
+            elif name == "list_directory":
+                for line in result.strip().split("\n"):
+                    console.print(f"  [dim]•[/dim] {line}")
+                console.print()
+
             else:
-                preview = result[:120].replace("\n", " ") + ("..." if len(result) > 120 else "")
+                preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
                 console.print(f"  [dim green]↳ {preview}[/dim green]")
                 console.print()
 
@@ -90,18 +134,20 @@ def render_events(task, messages):
 
         elif event["type"] == "done":
             stop_spinner()
-            console.print(Rule(style="dim"))
-            console.print(Panel(f"[white]{event['content']}[/white]", title="[bold blue]Done[/bold blue]"))
+            stop_stream()
+            console.print(Rule("[dim green]✓ done[/dim green]", style="dim"))
             console.print()
             break
 
         elif event["type"] == "error":
             stop_spinner()
-            console.print(f"[red]✖ API error: {event['content']}[/red]")
+            stop_stream()
+            console.print(f"\n[red]✖ Error: {event['content']}[/red]\n")
             break
 
         elif event["type"] == "max_steps":
             stop_spinner()
+            stop_stream()
             console.print("[red]⚠ Max steps reached.[/red]")
             break
 
@@ -111,10 +157,14 @@ def render_events(task, messages):
             except StopIteration:
                 break
 
+
 @app.command()
 def run():
     console.print()
-    console.print(Panel("[bold green]Terminal Coding Agent[/bold green]\n[dim]Type your task and press Enter. Type 'exit' to quit. Type 'clear' to reset session.[/dim]", expand=False))
+    console.print(Panel(
+        "[bold green]Terminal Coding Agent[/bold green]\n[dim]Type your task and press Enter. Type 'exit' to quit. Type 'clear' to reset session.[/dim]",
+        expand=False
+    ))
     console.print()
 
     saved = load_session()
@@ -158,6 +208,7 @@ def run():
 
         render_events(task, messages)
         save_session(messages)
+
 
 if __name__ == "__main__":
     run()

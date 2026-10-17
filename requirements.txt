@@ -2,3 +2,4 @@ openai
 typer
 rich
 python-dotenv
+pyyaml
