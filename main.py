@@ -31,10 +31,17 @@ def render_events(task, messages):
             live.stop()
             live = None
 
-    for event in run_loop(task, SYSTEM_PROMPT, messages):
+    gen = run_loop(task, SYSTEM_PROMPT, messages)
+    event = next(gen)
+
+    while True:
         if event["type"] == "thinking":
             live = Live(Spinner("dots", text=Text("thinking...", style="dim")), refresh_per_second=20, transient=True)
             live.start()
+            try:
+                event = gen.send(None)
+            except StopIteration:
+                break
 
         elif event["type"] == "tool_call":
             stop_spinner()
@@ -44,12 +51,25 @@ def render_events(task, messages):
             args_str = "  ".join(f"[dim]{k}=[/dim][italic]{v}[/italic]" for k, v in args.items())
             console.print(f"  [bold {color}]▶ {name}[/bold {color}]  {args_str}")
 
+            if event["needs_approval"]:
+                answer = console.input(f"  [bold yellow]Allow {name}? (y/n):[/bold yellow] ").strip().lower()
+                approval = "approved" if answer == "y" else "denied"
+                if approval == "denied":
+                    console.print("  [dim red]✖ Denied[/dim red]\n")
+            else:
+                approval = "approved"
+
+            try:
+                event = gen.send(approval)
+            except StopIteration:
+                break
+
         elif event["type"] == "tool_result":
-            result = event["result"]
             name = event["name"]
+            result = event["result"]
 
             if name == "edit_file" and result.startswith("DIFF"):
-                lines = result.split("\n")[1:]  # skip "DIFF" header
+                lines = result.split("\n")[1:]
                 for line in lines:
                     if line.startswith("+"):
                         console.print(f"  [green]{line}[/green]")
@@ -63,18 +83,33 @@ def render_events(task, messages):
                 console.print(f"  [dim green]↳ {preview}[/dim green]")
                 console.print()
 
+            try:
+                event = gen.send(None)
+            except StopIteration:
+                break
+
         elif event["type"] == "done":
             stop_spinner()
             console.print(Rule(style="dim"))
             console.print(Panel(f"[white]{event['content']}[/white]", title="[bold blue]Done[/bold blue]"))
             console.print()
+            break
+
+        elif event["type"] == "error":
+            stop_spinner()
+            console.print(f"[red]✖ API error: {event['content']}[/red]")
+            break
 
         elif event["type"] == "max_steps":
             stop_spinner()
             console.print("[red]⚠ Max steps reached.[/red]")
-        elif event["type"] == "error":
-            stop_spinner()
-            console.print(f"[red]✖ API error: {event['content']}[/red]")
+            break
+
+        else:
+            try:
+                event = gen.send(None)
+            except StopIteration:
+                break
 
 @app.command()
 def run():
@@ -106,26 +141,23 @@ def run():
             task = console.input("[bold green]>[/bold green] ").strip()
         except (KeyboardInterrupt, EOFError):
             save_session(messages)
-            console.print("\n[dim]Session saved. Bye.[/dim]")
             break
 
         if not task:
             continue
 
-        if task.lower() in ("exit", "quit"):
+        if task == "exit":
             save_session(messages)
-            console.print("[dim]Session saved. Bye.[/dim]")
             break
 
-        if task.lower() == "clear":
+        if task == "clear":
             clear_session()
             messages = []
-            console.print("[dim]Session cleared.[/dim]\n")
+            console.print("[dim]✓ Session cleared[/dim]\n")
             continue
 
-        console.print()
         render_events(task, messages)
         save_session(messages)
 
 if __name__ == "__main__":
-    app()
+    run()

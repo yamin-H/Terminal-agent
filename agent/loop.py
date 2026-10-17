@@ -12,6 +12,7 @@ client = OpenAI(
 )
 
 MAX_STEPS = 30
+RISKY_TOOLS = {"write_file", "edit_file", "run_command"}
 
 def run_loop(task: str, system_prompt: str, messages: list = None):
     if messages is None:
@@ -46,10 +47,14 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
         for tool_call in message.tool_calls:
             name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
+            needs_approval = name in RISKY_TOOLS
 
-            yield {"type": "tool_call", "name": name, "args": args}
+            approval = yield {"type": "tool_call", "name": name, "args": args, "needs_approval": needs_approval}
 
-            result = execute_tool(name, args)
+            if approval == "denied":
+                result = "User denied this action."
+            else:
+                result = execute_tool(name, args)
 
             yield {"type": "tool_result", "name": name, "result": result}
 

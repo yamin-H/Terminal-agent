@@ -1,16 +1,7 @@
-# agent/tools.py
 import subprocess
 from pathlib import Path
 
 def read_file(path: str) -> str:
-    """Read and return the contents of a file.
-
-    Args:
-        path: Relative path to the file to read.
-
-    Returns:
-        The file's text content, or an error message on failure.
-    """
     try:
         return Path(path).read_text(encoding="utf-8")
     except Exception as e:
