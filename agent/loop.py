@@ -13,13 +13,18 @@ client = OpenAI(
 
 MAX_STEPS = 30
 
-def run_loop(task: str, system_prompt: str):
-    messages = [{"role": "user", "content": task}]
+def run_loop(task: str, system_prompt: str, messages: list = None):
+    if messages is None:
+        messages = []
+
+    messages.append({"role": "user", "content": task})
     steps = 0
 
     while steps < MAX_STEPS:
+        yield {"type": "thinking"}
+
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="qwen/qwen3.8-27b",
             messages=[{"role": "system", "content": system_prompt}] + messages,
             tools=TOOL_DEFINITIONS,
         )
@@ -28,14 +33,21 @@ def run_loop(task: str, system_prompt: str):
         steps += 1
 
         if not message.tool_calls:
-            return message.content
+            messages.append({"role": "assistant", "content": message.content})
+            yield {"type": "done", "content": message.content}
+            return
 
         messages.append(message)
 
         for tool_call in message.tool_calls:
             name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
+
+            yield {"type": "tool_call", "name": name, "args": args}
+
             result = execute_tool(name, args)
+
+            yield {"type": "tool_result", "name": name, "result": result}
 
             messages.append({
                 "role": "tool",
@@ -43,4 +55,4 @@ def run_loop(task: str, system_prompt: str):
                 "content": result
             })
 
-    return "Max steps reached."
+    yield {"type": "max_steps"}

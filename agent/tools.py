@@ -4,7 +4,7 @@ from pathlib import Path
 
 def read_file(path: str) -> str:
     try:
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except Exception as e:
         return f"Error: {e}"
 
@@ -12,6 +12,32 @@ def write_file(path: str, content: str) -> str:
     try:
         Path(path).write_text(content)
         return "Done"
+    except Exception as e:
+        return f"Error: {e}"
+
+def edit_file(path: str, old_content: str, new_content: str) -> str:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        if old_content not in text:
+            return "Error: old_content not found in file. Read the file first and make sure it matches exactly."
+        updated = text.replace(old_content, new_content, 1)
+        Path(path).write_text(updated, encoding="utf-8")
+        return "Done"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def search_code(pattern: str, path: str = ".") -> str:
+    try:
+        matches = []
+        for file in Path(path).rglob("*.py"):
+            if any(p in file.parts for p in ["venv", "__pycache__"]):
+                continue
+            lines = file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            for i, line in enumerate(lines, 1):
+                if pattern in line:
+                    matches.append(f"{file}:{i}: {line.strip()}")
+        return "\n".join(matches) if matches else "No matches found."
     except Exception as e:
         return f"Error: {e}"
 
@@ -32,6 +58,8 @@ def run_command(command: str) -> str:
 TOOLS = {
     "read_file": read_file,
     "write_file": write_file,
+    "edit_file": edit_file,
+    "search_code": search_code,
     "list_directory": list_directory,
     "run_command": run_command,
 }
@@ -57,6 +85,21 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+    "type": "function",
+    "function": {
+        "name": "search_code",
+        "description": "Search for a pattern across all Python files in the repo. Use this before reading files to find where something is defined or used.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "The text or pattern to search for"},
+                "path": {"type": "string", "description": "Directory to search in. Defaults to current directory."}
+            },
+            "required": ["pattern"]
+        }
+    }
+},
     {
         "type": "function",
         "function": {
@@ -99,5 +142,21 @@ TOOL_DEFINITIONS = [
                 "required": ["command"]
             }
         }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "edit_file",
+        "description": "Edit a specific part of a file by replacing old_content with new_content. Always read the file first to get the exact content.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative path to the file"},
+                "old_content": {"type": "string", "description": "The exact text to replace"},
+                "new_content": {"type": "string", "description": "The text to replace it with"}
+            },
+            "required": ["path", "old_content", "new_content"]
+        }
     }
+},
 ]
