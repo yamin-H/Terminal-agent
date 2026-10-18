@@ -1,5 +1,21 @@
+import difflib
 import subprocess
 from pathlib import Path
+
+TEXT_EXTENSIONS = {
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
+    ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".scala", ".sh",
+    ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd", ".html", ".htm",
+    ".css", ".scss", ".sass", ".less", ".json", ".yaml", ".yml", ".toml",
+    ".xml", ".csv", ".sql", ".md", ".txt", ".rst", ".ini", ".cfg", ".conf",
+    ".env", ".gitignore", ".dockerignore", ".editorconfig", ".vue", ".svelte",
+    ".astro", ".r", ".R", ".jl", ".lua", ".pl", ".pm", ".ex", ".exs",
+    ".erl", ".hs", ".ml", ".clj", ".dart", ".tf", ".proto", ".graphql",
+    ".dockerfile", "Makefile", "Dockerfile", "Jenkinsfile",
+}
+
+SKIP_DIRS = {"venv", ".venv", "__pycache__", "node_modules", ".git", "dist", "build"}
+
 
 def read_file(path: str) -> str:
     try:
@@ -9,12 +25,13 @@ def read_file(path: str) -> str:
 
 def write_file(path: str, content: str) -> str:
     try:
-        Path(path).write_text(content)
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
         return "Done"
     except Exception as e:
         return f"Error: {e}"
 
-import difflib
 
 def edit_file(path: str, old_content: str, new_content: str) -> str:
     try:
@@ -37,10 +54,18 @@ def edit_file(path: str, old_content: str, new_content: str) -> str:
 def search_code(pattern: str, path: str = ".") -> str:
     try:
         matches = []
-        for file in Path(path).rglob("*.py"):
-            if any(p in file.parts for p in ["venv", "__pycache__"]):
+        root = Path(path)
+        for file in sorted(root.rglob("*")):
+            if any(p in file.parts for p in SKIP_DIRS):
                 continue
-            lines = file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if file.suffix not in TEXT_EXTENSIONS and file.name not in TEXT_EXTENSIONS:
+                continue
+            if not file.is_file():
+                continue
+            try:
+                lines = file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except Exception:
+                continue
             for i, line in enumerate(lines, 1):
                 if pattern in line:
                     matches.append(f"{file}:{i}: {line.strip()}")
@@ -93,25 +118,25 @@ TOOL_DEFINITIONS = [
         }
     },
     {
-    "type": "function",
-    "function": {
-        "name": "search_code",
-        "description": "Search for a pattern across all Python files in the repo. Use this before reading files to find where something is defined or used.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "The text or pattern to search for"},
-                "path": {"type": "string", "description": "Directory to search in. Defaults to current directory."}
-            },
-            "required": ["pattern"]
+        "type": "function",
+        "function": {
+            "name": "search_code",
+            "description": "Search for a text pattern across all source and config files in the repo. Use this before reading files to find where something is defined or used.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "The text or pattern to search for"},
+                    "path": {"type": "string", "description": "Directory to search in. Defaults to current directory."}
+                },
+                "required": ["pattern"]
+            }
         }
-    }
-},
+    },
     {
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file. Creates the file if it doesn't exist.",
+            "description": "Write content to a file. Creates the file and parent directories if they don't exist.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -151,19 +176,19 @@ TOOL_DEFINITIONS = [
         }
     },
     {
-    "type": "function",
-    "function": {
-        "name": "edit_file",
-        "description": "Edit a specific part of a file by replacing old_content with new_content. Always read the file first to get the exact content.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Relative path to the file"},
-                "old_content": {"type": "string", "description": "The exact text to replace"},
-                "new_content": {"type": "string", "description": "The text to replace it with"}
-            },
-            "required": ["path", "old_content", "new_content"]
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit a specific part of a file by replacing old_content with new_content. Always read the file first to get the exact content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path to the file"},
+                    "old_content": {"type": "string", "description": "The exact text to replace"},
+                    "new_content": {"type": "string", "description": "The text to replace it with"}
+                },
+                "required": ["path", "old_content", "new_content"]
+            }
         }
-    }
-},
+    },
 ]

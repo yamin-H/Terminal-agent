@@ -321,7 +321,7 @@ def run():
                 clear_session()
                 with console.status("  [dim]indexing repo...[/dim]", spinner="dots2"):
                     messages = seed_messages()
-            console.print("  [dim]session cleared[/dim]")
+                console.print("  [dim]session cleared[/dim]")
             continue
 
         if task.lower() in ("exit", "quit"):

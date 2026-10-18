@@ -23,7 +23,7 @@
 - **You approve every risky action.** Writing, editing and running commands always ask for your confirmation first.
 - **Clear diffs.** File edits are shown as syntax-highlighted diffs before you move on.
 - **Streaming markdown output.** Responses render live with headings, lists and code blocks.
-- **Bring your own model.** Pick from built-in presets or enter any model id supported by your provider.
+- **Bring your own provider.** Supports Groq, OpenAI, Google Gemini, Anthropic, Hugging Face, or any OpenAI-compatible endpoint (Ollama, OpenRouter, etc.).
 - **Session memory.** Your conversation resumes where you left off, per project.
 - **Cost visibility.** Token usage and running cost are shown after each turn.
 
@@ -52,8 +52,9 @@ yamin
 
 On first run, yamin walks you through a short setup:
 
-1. Paste your [Groq API key](https://console.groq.com/keys).
-2. Choose a model, or enter your own model id.
+1. Pick a provider (Groq, OpenAI, Gemini, Anthropic, Hugging Face, or a custom URL).
+2. Paste your API key.
+3. Choose a model, or enter your own model id.
 
 Then run `yamin` again and start asking:
 
@@ -65,45 +66,55 @@ Then run `yamin` again and start asking:
 
 ## Commands
 
-- `/help` shows all available commands
-- `/clear` clears the conversation and re-indexes the project
-- `/exit` saves the session and quits
+| Command    | Description                                     |
+| ---------- | ----------------------------------------------- |
+| `/help`    | Show all available commands                     |
+| `/tools`   | List all tools the agent can use                |
+| `/history` | Show current session message count              |
+| `/usage`   | Show session token usage and cost               |
+| `/undo`    | Discard uncommitted changes (back to last commit) |
+| `/clear`   | Clear the session and start fresh               |
+| `/exit`    | Exit the agent                                  |
 
 You can also press `Ctrl+C` at the prompt to save and exit.
 
 ## Tools
 
-- `list_directory` lists files and folders
-- `read_file` reads a file
-- `search_code` searches across the codebase
-- `edit_file` applies a targeted edit and shows the diff (asks approval)
-- `write_file` creates or overwrites a file (asks approval)
-- `run_command` runs a shell command (asks approval)
+| Tool             | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `list_directory` | List files and folders                                   |
+| `read_file`      | Read a file                                              |
+| `search_code`    | Search for a text pattern across all source files        |
+| `edit_file`      | Apply a targeted edit and show the diff (asks approval)  |
+| `write_file`     | Create or overwrite a file (asks approval)               |
+| `run_command`    | Run a shell command (asks approval)                      |
 
 ## Configuration
 
 Settings are stored in `~/.yamin/config.json`. You can edit this file directly:
 
-- `groq_api_key` is your API key
+- `api_key` is your provider API key
+- `provider` is the provider name (e.g. `groq`, `openai`, `gemini`)
+- `base_url` is the provider's API endpoint
 - `model` is the model id used for all requests
 - `max_steps` is the maximum number of tool steps per task (default `30`)
-- `max_tokens` is the context size before older messages are trimmed (default `100000`)
+- `max_tokens` is the context size before older messages are trimmed (default depends on provider)
 - `risky_tools` is the list of tools that require your approval
 
-To change your key or model, edit the file, or delete it and run `yamin` again to repeat the setup.
+To change your provider, key or model, edit the file, or delete it and run `yamin` again to repeat the setup. You can also run `yamin --setup` to reconfigure.
 
 ## Privacy and safety
 
 - Your API key and settings stay on your machine, in `~/.yamin/`.
 - Requests go directly from your machine to the model provider using your own key. yamin has no server and collects no telemetry.
 - The contents of files the agent reads are sent to the model provider as part of the conversation. Avoid running yamin in folders that contain secrets you don't want shared.
-- The session is saved in the folder where you run `yamin`. Add the session file to that project's `.gitignore`.
+- The session is saved as `.agent_session.json` in the folder where you run `yamin`. This file is already in the project's `.gitignore`.
 
 ## Development
 
 ```bash
-git clone https://github.com/<your-username>/yamin
-cd yamin
+git clone https://github.com/yamin-H/Terminal-agent.git
+cd Terminal-agent
 python -m venv venv
 venv\Scripts\activate        # macOS/Linux: source venv/bin/activate
 pip install -e .

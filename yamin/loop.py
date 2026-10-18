@@ -5,6 +5,7 @@ import uuid
 from openai import OpenAI
 from yamin.tools import TOOL_DEFINITIONS, execute_tool
 from yamin.config import load_config
+from yamin.usage import track
 
 config = load_config()
 
@@ -104,6 +105,7 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
                         model=config["model"],
                         messages=[{"role": "system", "content": system_prompt}] + trimmed,
                         stream=True,
+                        stream_options={"include_usage": True},
                         **kwargs,
                     )
                     break
@@ -129,8 +131,13 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
             full_content = ""
             calls        = []
             by_index     = {}
+            usage_data   = None
 
             for chunk in stream:
+                # capture usage from the final chunk
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage_data = chunk.usage
+
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -167,6 +174,16 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
             return
 
         steps += 1
+
+        # emit usage info
+        if usage_data:
+            input_tokens  = getattr(usage_data, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage_data, "completion_tokens", 0) or 0
+        else:
+            input_tokens  = count_tokens(trimmed)
+            output_tokens = len(full_content) // 4
+        usage_info = track(config["model"], input_tokens, output_tokens)
+        yield {"type": "usage", "data": usage_info}
 
         tool_calls = [c for c in calls if c["name"]]
         for c in tool_calls:
