@@ -1,24 +1,28 @@
 import json
 import os
 import time
+import uuid
 from openai import OpenAI
 from yamin.tools import TOOL_DEFINITIONS, execute_tool
 from yamin.config import load_config
-from yamin.setup import load_user_config
 
 config = load_config()
 
-MAX_STEPS   = config["max_steps"]
-RISKY_TOOLS = set(config["risky_tools"])
+MAX_STEPS        = config["max_steps"]
+RISKY_TOOLS      = set(config["risky_tools"])
+MAX_RESULT_CHARS = 4000
+RETRY_CODES      = {429, 500, 502, 503, 504, 529}
 
-_client = None
+_client   = None
+_tools_ok = True
 
 
 def get_client():
     global _client
     if _client is None:
-        key = load_user_config().get("groq_api_key") or os.getenv("GROQ_API_KEY")
-        _client = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
+        key      = config.get("api_key") or config.get("groq_api_key") or os.getenv("GROQ_API_KEY") or "none"
+        base_url = config.get("base_url") or "https://api.groq.com/openai/v1"
+        _client  = OpenAI(api_key=key, base_url=base_url)
     return _client
 
 
@@ -26,20 +30,59 @@ def count_tokens(messages: list) -> int:
     total = 0
     for m in messages:
         if isinstance(m, dict):
-            content = m.get("content") or ""
-            total += len(str(content)) // 4
+            total += len(str(m.get("content") or "")) // 4
+            total += len(str(m.get("tool_calls") or "")) // 4
     return total
 
 
-def trim_messages(messages: list, max_tokens: int = 100000) -> list:
+def trim_messages(messages: list, max_tokens: int = 4000) -> list:
     if count_tokens(messages) <= max_tokens:
         return messages
     head = messages[:2]
-    tail = messages[-10:]
-    return head + [{"role": "user", "content": "[Earlier messages trimmed to save context]"}] + tail
+    rest = messages[2:]
+    while len(rest) > 1 and count_tokens(head + rest) > max_tokens:
+        rest.pop(0)
+        # never leave a tool result without the assistant message that called it
+        while len(rest) > 1 and rest[0].get("role") == "tool":
+            rest.pop(0)
+    return head + rest
+
+
+def cap_result(result: str) -> str:
+    if len(result) <= MAX_RESULT_CHARS:
+        return result
+    cut = len(result) - MAX_RESULT_CHARS
+    return (
+        result[:MAX_RESULT_CHARS]
+        + f"\n... [truncated {cut} chars, read a smaller section if you need more]"
+    )
+
+
+def classify_error(e) -> str:
+    code = getattr(e, "status_code", None)
+    text = str(e).lower()
+    if code in RETRY_CODES or "overloaded" in text or "too many requests" in text:
+        return "retry"
+    if "tool" in text and ("not support" in text or "unsupported" in text):
+        return "no_tools"
+    return "fatal"
+
+
+def friendly_error(e) -> str:
+    code  = getattr(e, "status_code", None)
+    hints = {
+        401: "Invalid API key. Run `yamin --setup` to change it.",
+        402: "No credits left on this provider account.",
+        404: "Model or endpoint not found. Run `yamin --setup` to pick another model.",
+        413: "Request too large for this model or plan. Try /clear or a smaller task.",
+    }
+    raw = str(e)[:400]
+    return f"{hints[code]}\n  {raw}" if code in hints else raw
 
 
 def run_loop(task: str, system_prompt: str, messages: list = None):
+    global _tools_ok
+
     if messages is None:
         messages = []
 
@@ -56,29 +99,36 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
 
             for attempt in range(4):
                 try:
+                    kwargs = {"tools": TOOL_DEFINITIONS} if _tools_ok else {}
                     stream = get_client().chat.completions.create(
                         model=config["model"],
                         messages=[{"role": "system", "content": system_prompt}] + trimmed,
-                        tools=TOOL_DEFINITIONS,
                         stream=True,
+                        **kwargs,
                     )
                     break
                 except Exception as e:
-                    err = str(e)
-                    is_rate_limit = (
-                        "429" in err
-                        or "rate limit" in err.lower()
-                        or "too many requests" in err.lower()
-                    )
-                    if is_rate_limit and attempt < 3:
+                    kind = classify_error(e)
+                    if kind == "retry" and attempt < 3:
                         yield {"type": "retry", "attempt": attempt + 1, "wait": delay}
                         time.sleep(delay)
                         delay *= 2
+                    elif kind == "no_tools" and _tools_ok:
+                        _tools_ok = False
+                        yield {
+                            "type": "notice",
+                            "content": "This model doesn't support tools, so it can only chat. "
+                                       "Run `yamin --setup` to pick a different model.",
+                        }
                     else:
                         raise
 
-            full_content   = ""
-            tool_calls_acc = {}
+            if stream is None:
+                raise RuntimeError("Could not reach the provider after several attempts.")
+
+            full_content = ""
+            calls        = []
+            by_index     = {}
 
             for chunk in stream:
                 if not chunk.choices:
@@ -91,25 +141,37 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
 
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
-                        i = tc.index
-                        if i not in tool_calls_acc:
-                            tool_calls_acc[i] = {"id": tc.id, "name": "", "args": ""}
+                        idx = tc.index if tc.index is not None else 0
+                        cur = by_index.get(idx)
+                        # some providers reuse index 0 for several parallel calls,
+                        # so a new id on the same index means a new call
+                        if cur is None or (tc.id and cur["id"] and tc.id != cur["id"]):
+                            cur = {"id": "", "name": "", "args": "", "extra": {}}
+                            calls.append(cur)
+                            by_index[idx] = cur
                         if tc.id:
-                            tool_calls_acc[i]["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            tool_calls_acc[i]["name"] = tc.function.name
-                        if tc.function and tc.function.arguments:
-                            tool_calls_acc[i]["args"] += tc.function.arguments
+                            cur["id"] = tc.id
+                        fn = tc.function
+                        if fn and fn.name:
+                            cur["name"] = fn.name
+                        if fn and fn.arguments:
+                            cur["args"] += fn.arguments
+                        # keep any provider-specific fields (e.g. Gemini's thought signature)
+                        cur["extra"].update(getattr(tc, "model_extra", None) or {})
 
         except KeyboardInterrupt:
             yield {"type": "error", "content": "Interrupted by user."}
             return
         except Exception as e:
-            yield {"type": "error", "content": str(e)}
+            yield {"type": "error", "content": friendly_error(e)}
             return
 
         steps += 1
-        tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+
+        tool_calls = [c for c in calls if c["name"]]
+        for c in tool_calls:
+            if not c["id"]:
+                c["id"] = f"call_{uuid.uuid4().hex[:12]}"
 
         if not tool_calls:
             messages.append({"role": "assistant", "content": full_content})
@@ -118,12 +180,13 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
 
         messages.append({
             "role": "assistant",
-            "content": full_content,
+            "content": full_content or None,
             "tool_calls": [
                 {
+                    **tc["extra"],
                     "id": tc["id"],
                     "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["args"]},
+                    "function": {"name": tc["name"], "arguments": tc["args"] or "{}"},
                 }
                 for tc in tool_calls
             ],
@@ -149,7 +212,10 @@ def run_loop(task: str, system_prompt: str, messages: list = None):
             if approval == "denied":
                 result = "User denied this action."
             else:
-                result = execute_tool(name, args)
+                try:
+                    result = cap_result(str(execute_tool(name, args)))
+                except Exception as e:
+                    result = f"Tool error: {e}"
 
             yield {"type": "tool_result", "name": name, "result": result, "args": args}
 

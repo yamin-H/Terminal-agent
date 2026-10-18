@@ -1,6 +1,6 @@
 import shutil
 import subprocess
-
+import sys
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -236,6 +236,15 @@ def render_events(task: str, messages: list):
             except StopIteration:
                 break
 
+        elif t == "notice":
+            stop_spinner()
+            flush_stream()
+            console.print(f"  [yellow]{escape(event['content'])}[/yellow]\n")
+            try:
+                event = gen.send(None)
+            except StopIteration:
+                break
+
         elif t == "done":
             stop_spinner()
             flush_stream()
@@ -273,8 +282,12 @@ def render_events(task: str, messages: list):
 # ── entry ──────────────────────────────────────────────────────────────────────
 
 def run():
-    if first_run():
-        run_setup()
+    if first_run() or "--setup" in sys.argv:
+        try:
+            run_setup()
+            clear_session()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n  [dim]setup cancelled[/dim]\n")
         return
 
     print_welcome()
@@ -308,7 +321,7 @@ def run():
                 clear_session()
                 with console.status("  [dim]indexing repo...[/dim]", spinner="dots2"):
                     messages = seed_messages()
-            console.print()
+            console.print("  [dim]session cleared[/dim]")
             continue
 
         if task.lower() in ("exit", "quit"):

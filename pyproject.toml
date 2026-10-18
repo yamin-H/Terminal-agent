@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yamin"
-version = "0.1.0"
+version = "0.2.3"
 description = "A terminal AI coding agent"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Yamin Hossain" }]
 dependencies = [
     "openai",
